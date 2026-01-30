@@ -37,9 +37,9 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           RUN_MODE: breaking
-          MIN_VERIFIED_SOURCES: "2"
+          MIN_VERIFIED_SOURCES: "1"
           TOTAL_SOURCES_TO_SHOW: "2"
-          ALLOW_FALLBACK_SOURCES: "false"
+          ALLOW_FALLBACK_SOURCES: "TRUE"
           BREAKING_MAX_AGE_HOURS: "6"
           BREAKING_SCAN_PER_FEED: "12"
         run: python bot.py
