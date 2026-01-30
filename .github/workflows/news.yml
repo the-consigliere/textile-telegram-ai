@@ -3,7 +3,7 @@ name: Regular News Post (Retail/Fashion/Textile) - Every 2 Hours
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */0.5 * * *"   
+    - cron: "*/30 * * * *"   
 concurrency:
   group: regular-news
   cancel-in-progress: true
