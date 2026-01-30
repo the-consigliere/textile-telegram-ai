@@ -1,4 +1,4 @@
-name: Breaking News Monitor (Every 15 Minutes)
+name: Breaking News Monitor (Retail/Fashion/Textile) - Every 15 Minutes
 
 on:
   workflow_dispatch:
@@ -38,8 +38,9 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           RUN_MODE: breaking
-          MIN_VERIFIED_SOURCES: "1"
-          ALLOW_FALLBACK_SOURCES: "true"
+          MIN_VERIFIED_SOURCES: "2"
+          TOTAL_SOURCES_TO_SHOW: "2"
+          ALLOW_FALLBACK_SOURCES: "false"
           BREAKING_MAX_AGE_HOURS: "6"
           BREAKING_SCAN_PER_FEED: "12"
         run: python bot.py
