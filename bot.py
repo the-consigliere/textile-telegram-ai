@@ -21,11 +21,18 @@ bot = telegram.Bot(token=BOT_TOKEN)
 # breaking = short urgent post (runs every 15 minutes)
 RUN_MODE = os.getenv("RUN_MODE", "regular").lower()
 
-# Source requirements
-ALLOW_FALLBACK_SOURCES = os.getenv("ALLOW_FALLBACK_SOURCES", "true").lower() == "true"
-MIN_VERIFIED_SOURCES = int(os.getenv("MIN_VERIFIED_SOURCES", "1"))  # recommended: 1
+# ===================== SOURCE REQUIREMENTS (YOUR RULES) =====================
+# Minimum 2 VERIFIED sources required to "confirm" the news
+MIN_VERIFIED_SOURCES = int(os.getenv("MIN_VERIFIED_SOURCES", "2"))
 
-# Breaking logic knobs
+# Total sources to display (we’ll output exactly 2 to match your requirement)
+TOTAL_SOURCES_TO_SHOW = int(os.getenv("TOTAL_SOURCES_TO_SHOW", "2"))
+
+# If True, we can fill missing sources with non-verified “additional” links.
+# You asked for confirmation links, so keep this FALSE.
+ALLOW_FALLBACK_SOURCES = os.getenv("ALLOW_FALLBACK_SOURCES", "false").lower() == "true"
+
+# ===================== BREAKING SETTINGS =====================
 BREAKING_KEYWORDS = [
     "breaking", "urgent", "exclusive", "acquire", "acquires", "acquisition", "merger",
     "ipo", "bankruptcy", "funding", "raises", "layoff", "layoffs", "security breach",
@@ -34,8 +41,8 @@ BREAKING_KEYWORDS = [
 BREAKING_MAX_AGE_HOURS = int(os.getenv("BREAKING_MAX_AGE_HOURS", "6"))
 BREAKING_SCAN_PER_FEED = int(os.getenv("BREAKING_SCAN_PER_FEED", "12"))
 
-# ===================== RSS FEEDS =====================
-RETAIL_FASHION_FEEDS = [
+# ===================== RSS FEEDS (RETAIL / FASHION / TEXTILE ONLY) =====================
+RSS_FEEDS = [
     "https://www.fibre2fashion.com/rss/news.xml",
     "https://www.just-style.com/feed/",
     "https://www.apparelresources.com/feed/",
@@ -43,19 +50,8 @@ RETAIL_FASHION_FEEDS = [
     "https://www.fashionunited.com/rss/news"
 ]
 
-TECH_FEEDS = [
-    "https://techcrunch.com/feed/",
-    "https://www.theverge.com/rss/index.xml",
-    "https://www.wired.com/feed/rss",
-    "https://arstechnica.com/feed/"
-]
-
-RSS_FEEDS = [
-    ("Retail/Fashion", RETAIL_FASHION_FEEDS),
-    ("Tech", TECH_FEEDS)
-]
-
 # ===================== VERIFIED DOMAINS (ALLOWLIST) =====================
+# Add more if you want to broaden confirmation sources
 VERIFIED_DOMAINS = {
     "reuters.com",
     "ft.com",
@@ -76,14 +72,7 @@ VERIFIED_DOMAINS = {
     "fashionunited.com",
     "fibre2fashion.com",
     "just-style.com",
-    "apparelresources.com",
-
-    "techcrunch.com",
-    "theverge.com",
-    "wired.com",
-    "arstechnica.com",
-    "zdnet.com",
-    "engadget.com"
+    "apparelresources.com"
 }
 
 CACHE_FILE = "posted.json"
@@ -134,9 +123,10 @@ def looks_breaking(title: str) -> bool:
     return any(k in t for k in BREAKING_KEYWORDS)
 
 # ===================== GDELT SEARCH =====================
-def gdelt_verified_sources(query: str, max_needed: int = 5):
+def gdelt_verified_sources(query: str, max_needed: int = 10):
     """
     Returns verified source URLs only (filtered by allowlist).
+    Free + public API.
     """
     end = time.strftime("%Y%m%d%H%M%S", time.gmtime())
     start = time.strftime("%Y%m%d%H%M%S", time.gmtime(time.time() - 7 * 24 * 3600))
@@ -167,47 +157,11 @@ def gdelt_verified_sources(query: str, max_needed: int = 5):
         pass
     return urls
 
-def gdelt_any_sources(query: str, max_needed: int = 10):
-    """
-    Returns any source URLs (not filtered) for fallback.
-    """
-    end = time.strftime("%Y%m%d%H%M%S", time.gmtime())
-    start = time.strftime("%Y%m%d%H%M%S", time.gmtime(time.time() - 7 * 24 * 3600))
-
-    params = {
-        "query": query,
-        "mode": "ArtList",
-        "format": "json",
-        "maxrecords": 50,
-        "sort": "HybridRel",
-        "startdatetime": start,
-        "enddatetime": end
-    }
-
-    urls = []
-    try:
-        r = requests.get("https://api.gdeltproject.org/api/v2/doc/doc", params=params, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-        for a in data.get("articles", []):
-            u = a.get("url", "")
-            if u and u.startswith("http"):
-                if u not in urls:
-                    urls.append(u)
-            if len(urls) >= max_needed:
-                break
-    except Exception:
-        pass
-    return urls
-
 # ===================== SOURCE SELECTION =====================
-def ensure_sources(category: str, entry, total_needed: int = 3):
+def ensure_sources(entry, total_needed: int = 2):
     """
-    Returns (sources_list, verified_count).
-    - Aim for total_needed sources.
-    - Prefer verified sources.
-    - If ALLOW_FALLBACK_SOURCES = true, fill remaining with additional (non-verified) sources.
-    - Enforces MIN_VERIFIED_SOURCES in main().
+    Return (sources_list, verified_count).
+    We aim for total_needed sources, verified first.
     """
     title = strip_html(entry.get("title", ""))
     link = entry.get("link", "")
@@ -215,24 +169,24 @@ def ensure_sources(category: str, entry, total_needed: int = 3):
     verified = []
     others = []
 
-    # Entry link first
+    # 1) Entry link
     if link:
         if is_verified(link):
             verified.append(link)
         else:
             others.append(link)
 
-    # Verified from GDELT using category context
-    query = f"{title} {category}"
-    for u in gdelt_verified_sources(query=query, max_needed=10):
+    # 2) Verified from GDELT using title
+    query = f"{title} retail fashion textile"
+    for u in gdelt_verified_sources(query=query, max_needed=15):
         if u not in verified:
             verified.append(u)
         if len(verified) >= total_needed:
             break
 
-    # Broader verified search
+    # 3) Broader verified search
     if len(verified) < total_needed:
-        for u in gdelt_verified_sources(query=title, max_needed=15):
+        for u in gdelt_verified_sources(query=title, max_needed=20):
             if u not in verified:
                 verified.append(u)
             if len(verified) >= total_needed:
@@ -240,16 +194,8 @@ def ensure_sources(category: str, entry, total_needed: int = 3):
 
     sources = verified[:total_needed]
 
-    # Fallback to any sources (still real links) so you always get 3 lines
+    # Optional fallback (disabled by default)
     if len(sources) < total_needed and ALLOW_FALLBACK_SOURCES:
-        # Add more candidates from GDELT (any domains)
-        any_urls = gdelt_any_sources(query=query, max_needed=15) + gdelt_any_sources(query=title, max_needed=15)
-
-        # Merge others list
-        for u in any_urls:
-            if u not in verified and u not in others:
-                others.append(u)
-
         for u in others:
             if u not in sources:
                 sources.append(u)
@@ -263,67 +209,53 @@ def ensure_sources(category: str, entry, total_needed: int = 3):
 def format_sources(sources):
     lines = []
     for i, s in enumerate(sources, start=1):
-        tag = "✅ Verified" if is_verified(s) else "➕ Additional"
-        lines.append(f"Source {i} ({tag}): {s}")
+        lines.append(f"Source {i}: {s}")
     return "\n".join(lines)
 
 # ===================== CONTENT BUILDERS =====================
-def build_linkedin_style_post(category: str, entry, sources: list):
-    title = strip_html(entry.get("title", "Breaking Update"))
+def build_linkedin_style_post(entry, sources: list):
+    title = strip_html(entry.get("title", "Industry Update"))
     summary = strip_html(entry.get("summary", ""))
 
     if len(summary) > 900:
         summary = summary[:900].rstrip() + "..."
 
-    topic = "🌍 Retail & Fashion" if category == "Retail/Fashion" else "💻 Tech"
-
-    hook = f"🚨✨ *{topic} Pulse:* {title} ✨🚨"
+    hook = f"🧵✨ *Retail / Fashion / Textile Pulse:* {title} ✨🧵"
 
     what = (
-        "🧾 *What’s happening?*\n"
+        "🧾 *What’s this about?*\n"
         f"• {summary}"
     )
 
     deep = (
-        "🔎 *Deeper take (why it matters):*\n"
-        "• This suggests a strategic shift with ripple effects across pricing, supply chain, and consumer demand.\n"
-        "• Watch for who benefits: brands, retailers, suppliers — and where margins get pressured.\n"
-        "• The next 30–90 days (execution + KPIs) will reveal whether this move sticks."
-        if category == "Retail/Fashion" else
-        "🔎 *Deeper take (why it matters):*\n"
-        "• This shows how fast the stack is evolving — product choices and ecosystem moves matter.\n"
-        "• Watch adoption signals: pilots, developer traction, and real performance/security benchmarks.\n"
-        "• The next 30–90 days (roadmap + releases) will prove real-world value."
+        "🔎 *Deeper context (quick analysis):*\n"
+        "• This could influence sourcing strategies, vendor negotiations, and lead times.\n"
+        "• Watch pricing pressure, inventory cycles, and how brands respond across channels.\n"
+        "• The next 30–90 days will reveal execution quality through KPIs (sell-through, margin, OTIF, returns)."
     )
 
     insight = (
-        "✅ *Quick insight (in short):*\n"
-        "• Strong execution can improve positioning and efficiency.\n"
-        "• Winners will measure outcomes tightly and move faster than competitors.\n"
-        "• Track: margin impact + customer response + operational stability."
-        if category == "Retail/Fashion" else
-        "✅ *Quick insight (in short):*\n"
-        "• Winners will ship faster, prove ROI, and reduce deployment risk.\n"
-        "• Trust (security + reliability) will drive adoption.\n"
-        "• Track: measurable ROI + scalability + compliance."
+        "✅ *Conclusion (key insight in short):*\n"
+        "• Strong execution here can improve competitiveness, but weak rollout can hit margin and customer trust.\n"
+        "• The smartest players will move fast, test small, and scale what works."
     )
 
     src_lines = format_sources(sources)
 
     cta = (
-        "💬 *Your take?*\n"
-        "If you were leading strategy here—what would you do next? What risks or opportunities do you see?"
+        "💬 *Your suggestion?*\n"
+        "If you were leading the team, what’s the ONE move you’d prioritize next — and why? 👇"
     )
 
     hashtags = (
-        "#Retail #Fashion #Apparel #Textiles #BrandStrategy #Ecommerce #SupplyChain #RetailTech #ConsumerTrends\n"
-        "#Technology #AI #Cloud #CyberSecurity #ProductStrategy #Innovation #DigitalTransformation"
+        "#Retail #Fashion #Textile #Apparel #Merchandising #Sourcing #SupplyChain #RetailStrategy #BrandStrategy\n"
+        "#FashionBusiness #TextileIndustry #RetailTrends #ApparelIndustry"
     )
 
-    post = "\n\n".join([hook, what, deep, insight, "🔗 *Sources:*", src_lines, cta, hashtags])
+    post = "\n\n".join([hook, what, deep, insight, "🔗 *Confirmed Sources (min 2):*", src_lines, cta, hashtags])
     return post
 
-def build_breaking_post(category: str, entry, sources: list):
+def build_breaking_post(entry, sources: list):
     title = strip_html(entry.get("title", "Breaking Update"))
     summary = strip_html(entry.get("summary", ""))
 
@@ -333,12 +265,12 @@ def build_breaking_post(category: str, entry, sources: list):
     src_lines = format_sources(sources)
 
     post = (
-        f"🚨🔥 *BREAKING NEWS* 🔥🚨\n\n"
-        f"🧠 *{title}*\n\n"
+        f"🚨🔥 *BREAKING (Retail / Fashion / Textile)* 🔥🚨\n\n"
+        f"🧵 *{title}*\n\n"
         f"📌 {summary}\n\n"
-        f"🔗 *Sources:*\n{src_lines}\n\n"
-        f"💬 *Quick question:* What’s your take—opportunity or risk?\n\n"
-        f"#BreakingNews #Retail #Fashion #Tech #Business"
+        f"🔗 *Confirmed Sources (min 2):*\n{src_lines}\n\n"
+        f"💬 *What’s your take?* Opportunity or risk for brands/retailers? 👇\n\n"
+        f"#BreakingNews #Retail #Fashion #Textile #Apparel"
     )
     return post
 
@@ -346,54 +278,50 @@ def build_breaking_post(category: str, entry, sources: list):
 def pick_latest_entry():
     latest = None
     latest_ts = 0
-    latest_category = None
 
-    for category, feeds in RSS_FEEDS:
-        for feed_url in feeds:
-            feed = feedparser.parse(feed_url)
-            if not feed.entries:
-                continue
-            for e in feed.entries[:10]:
-                ts = entry_timestamp(e)
-                if ts > latest_ts and e.get("title") and e.get("link"):
-                    latest = e
-                    latest_ts = ts
-                    latest_category = category
-    return latest_category, latest
+    for feed_url in RSS_FEEDS:
+        feed = feedparser.parse(feed_url)
+        if not feed.entries:
+            continue
+        for e in feed.entries[:12]:
+            ts = entry_timestamp(e)
+            if ts > latest_ts and e.get("title") and e.get("link"):
+                latest = e
+                latest_ts = ts
+    return latest
 
 def find_breaking_candidate():
     now = int(time.time())
     max_age = BREAKING_MAX_AGE_HOURS * 3600
 
-    for category, feeds in RSS_FEEDS:
-        for feed_url in feeds:
-            feed = feedparser.parse(feed_url)
-            if not feed.entries:
+    for feed_url in RSS_FEEDS:
+        feed = feedparser.parse(feed_url)
+        if not feed.entries:
+            continue
+
+        for e in feed.entries[:BREAKING_SCAN_PER_FEED]:
+            title = strip_html(e.get("title", ""))
+            link = e.get("link", "")
+            if not title or not link:
                 continue
 
-            for e in feed.entries[:BREAKING_SCAN_PER_FEED]:
-                title = strip_html(e.get("title", ""))
-                link = e.get("link", "")
-                if not title or not link:
-                    continue
+            ts = entry_timestamp(e)
+            if (now - ts) <= max_age and looks_breaking(title):
+                return e
 
-                ts = entry_timestamp(e)
-                if (now - ts) <= max_age and looks_breaking(title):
-                    return category, e
-
-    return None, None
+    return None
 
 # ===================== MAIN =====================
 def main():
     cache = load_cache()
 
     if RUN_MODE == "breaking":
-        category, entry = find_breaking_candidate()
+        entry = find_breaking_candidate()
         if not entry:
             print("No breaking candidate found.")
             return
     else:
-        category, entry = pick_latest_entry()
+        entry = pick_latest_entry()
         if not entry:
             print("No entries found.")
             return
@@ -403,17 +331,17 @@ def main():
         print("Already posted. Skipping.")
         return
 
-    sources, verified_count = ensure_sources(category, entry, total_needed=3)
+    sources, verified_count = ensure_sources(entry, total_needed=TOTAL_SOURCES_TO_SHOW)
 
-    # Trust gate: must have at least MIN_VERIFIED_SOURCES verified sources
-    if verified_count < MIN_VERIFIED_SOURCES:
-        print(f"Not enough verified sources ({verified_count}/{MIN_VERIFIED_SOURCES}). Skipping item.")
+    # Your confirmation rule: require at least 2 verified sources
+    if verified_count < MIN_VERIFIED_SOURCES or len(sources) < 2:
+        print(f"Not enough verified sources ({verified_count}/{MIN_VERIFIED_SOURCES}). Skipping item safely.")
         return
 
     if RUN_MODE == "breaking":
-        post = build_breaking_post(category, entry, sources)
+        post = build_breaking_post(entry, sources)
     else:
-        post = build_linkedin_style_post(category, entry, sources)
+        post = build_linkedin_style_post(entry, sources)
 
     bot.send_message(
         chat_id=CHANNEL_ID,
@@ -425,7 +353,6 @@ def main():
     cache[uid] = {
         "title": strip_html(entry.get("title", "")),
         "time": int(time.time()),
-        "category": category,
         "mode": RUN_MODE
     }
     save_cache(cache)
