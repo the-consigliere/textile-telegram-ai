@@ -8,8 +8,8 @@ from bs4 import BeautifulSoup
 import telegram
 
 # ===================== TELEGRAM CONFIG =====================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
+BOT_TOKEN = os.getenv("8386226585:AAFamfLZ38bW44RXtWfOqBeejIYZiO5zP28")
+CHANNEL_ID = os.getenv("-1003554679496")
 
 if not BOT_TOKEN or not CHANNEL_ID:
     raise ValueError("Missing BOT_TOKEN or CHANNEL_ID. Add them in GitHub → Settings → Secrets → Actions.")
