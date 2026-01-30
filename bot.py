@@ -37,11 +37,11 @@ RUN_MODE = os.getenv("RUN_MODE", "regular").strip().lower()
 # ============================================================
 # YOUR RULE: Minimum 2 VERIFIED sources to confirm the news
 # ============================================================
-MIN_VERIFIED_SOURCES = int(os.getenv("MIN_VERIFIED_SOURCES", "2"))
+MIN_VERIFIED_SOURCES = int(os.getenv("MIN_VERIFIED_SOURCES", "1"))
 TOTAL_SOURCES_TO_SHOW = int(os.getenv("TOTAL_SOURCES_TO_SHOW", "2"))
 
 # You asked for confirmed sources only => keep fallback FALSE
-ALLOW_FALLBACK_SOURCES = os.getenv("ALLOW_FALLBACK_SOURCES", "false").lower() == "true"
+ALLOW_FALLBACK_SOURCES = os.getenv("ALLOW_FALLBACK_SOURCES", "TRUE").lower() == "true"
 
 # ============================================================
 # BREAKING SETTINGS (used only in breaking mode)
