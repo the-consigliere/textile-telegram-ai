@@ -1,4 +1,4 @@
-name: Breaking News Monitor (Retail/Fashion/Textile) - Every 30 Minutes
+name: Breaking News Monitor (Retail/Fashion/Textile) - Every 15 Minutes
 
 on:
   workflow_dispatch:
