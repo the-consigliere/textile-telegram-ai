@@ -1,9 +1,10 @@
-name: Regular News Post (Retail/Fashion/Textile) - Every 2 Hours
+name: Regular News Post (Retail/Fashion/Textile) - Every 30 Minutes
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"   
+    - cron: "*/30 * * * *"   # Every 30 minutes (UTC)
+
 concurrency:
   group: regular-news
   cancel-in-progress: true
@@ -25,9 +26,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: posted.json
-          key: posted-cache-${{ github.ref_name }}
+          key: posted-cache-v1-${{ github.ref_name }}
           restore-keys: |
-            posted-cache-
+            posted-cache-v1-
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -41,3 +42,4 @@ jobs:
           TOTAL_SOURCES_TO_SHOW: "2"
           ALLOW_FALLBACK_SOURCES: "false"
         run: python bot.py
+``
