@@ -39,5 +39,5 @@ jobs:
           RUN_MODE: regular
           MIN_VERIFIED_SOURCES: "1"
           TOTAL_SOURCES_TO_SHOW: "2"
-          ALLOW_FALLBACK_SOURCES: "TRUE"
+          ALLOW_FALLBACK_SOURCES: "true"
         run: python bot.py
