@@ -1,14 +1,12 @@
-name: Telegram Textile AI Bot
+name: Telegram Textile + Tech AI News Bot
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */4 * * *"
-
+    - cron: "0 */2 * * *"
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -18,7 +16,7 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Restore posted cache
+      - name: Restore cache (posted history)
         uses: actions/cache@v4
         with:
           path: posted.json
