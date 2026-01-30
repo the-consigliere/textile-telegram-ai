@@ -9,14 +9,13 @@ from bs4 import BeautifulSoup
 import telegram
 
 # ============================================================
-# ✅ PASTE HERE (or keep empty and use GitHub Secrets instead)
+# ✅ PASTE HERE (or leave empty and use GitHub Secrets)
 # ============================================================
 BOT_TOKEN = "8386226585:AAFamfLZ38bW44RXtWfOqBeejIYZiO5zP28"      # e.g. "123456789:AA...."
 CHANNEL_ID = "-1003554679496"     # e.g. -1001234567890  (can be int or string)
 
-# If you prefer GitHub Secrets, leave the above empty and set:
-# BOT_TOKEN secret name: BOT_TOKEN
-# CHANNEL_ID secret name: CHANNEL_ID
+# If you prefer GitHub Secrets, leave above empty and set:
+# Secrets names: BOT_TOKEN and CHANNEL_ID
 if not BOT_TOKEN:
     BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 if not CHANNEL_ID:
@@ -35,13 +34,15 @@ bot = telegram.Bot(token=BOT_TOKEN)
 RUN_MODE = os.getenv("RUN_MODE", "regular").strip().lower()
 
 # ============================================================
-# YOUR RULE: Minimum 2 VERIFIED sources to confirm the news
+# ✅ YOUR NEW RULE: Minimum 1 VERIFIED source required
 # ============================================================
 MIN_VERIFIED_SOURCES = int(os.getenv("MIN_VERIFIED_SOURCES", "1"))
+
+# Show exactly 2 source links in the post
 TOTAL_SOURCES_TO_SHOW = int(os.getenv("TOTAL_SOURCES_TO_SHOW", "2"))
 
-# You asked for confirmed sources only => keep fallback FALSE
-ALLOW_FALLBACK_SOURCES = os.getenv("ALLOW_FALLBACK_SOURCES", "TRUE").lower() == "true"
+# ✅ Now fallback is allowed to fill Source 2 if needed
+ALLOW_FALLBACK_SOURCES = os.getenv("ALLOW_FALLBACK_SOURCES", "true").lower() == "true"
 
 # ============================================================
 # BREAKING SETTINGS (used only in breaking mode)
@@ -69,7 +70,8 @@ RSS_FEEDS = [
 ]
 
 # ============================================================
-# Verified domains allowlist (edit freely)
+# VERIFIED DOMAINS (ALLOWLIST)
+# Add more trusted sites if you want higher "verified" hit-rate
 # ============================================================
 VERIFIED_DOMAINS = {
     "reuters.com",
@@ -120,11 +122,14 @@ def strip_html(text: str) -> str:
     clean = re.sub(r"\s+", " ", clean).strip()
     return clean
 
+def safe_html(text: str) -> str:
+    # Prevent Telegram HTML parsing errors
+    return html.escape(text or "")
+
 def get_domain(url: str) -> str:
     try:
         u = re.sub(r"^https?://", "", url.strip())
-        domain = u.split("/")[0].lower()
-        domain = domain.replace("www.", "")
+        domain = u.split("/")[0].lower().replace("www.", "")
         return domain
     except Exception:
         return ""
@@ -143,17 +148,12 @@ def looks_breaking(title: str) -> bool:
     t = (title or "").lower()
     return any(k in t for k in BREAKING_KEYWORDS)
 
-def safe_html(text: str) -> str:
-    # Prevent Telegram HTML parsing errors
-    return html.escape(text or "")
-
 # ============================================================
-# GDELT (Free verified source search)
+# GDELT (Free global news index) – used to find extra coverage
 # ============================================================
-def gdelt_verified_sources(query: str, max_needed: int = 10):
+def gdelt_sources_any(query: str, max_needed: int = 10):
     """
-    Returns verified source URLs only (filtered by allowlist).
-    Uses free public GDELT DOC API.
+    Returns ANY source URLs (fallback pool).
     """
     end = time.strftime("%Y%m%d%H%M%S", time.gmtime())
     start = time.strftime("%Y%m%d%H%M%S", time.gmtime(time.time() - 7 * 24 * 3600))
@@ -175,53 +175,71 @@ def gdelt_verified_sources(query: str, max_needed: int = 10):
         data = r.json()
         for a in data.get("articles", []):
             u = a.get("url", "")
-            if u and u.startswith("http") and is_verified(u):
-                if u not in urls:
-                    urls.append(u)
+            if u and u.startswith("http") and u not in urls:
+                urls.append(u)
             if len(urls) >= max_needed:
                 break
     except Exception:
         pass
     return urls
 
+def gdelt_sources_verified(query: str, max_needed: int = 10):
+    """
+    Returns VERIFIED source URLs only (filtered by allowlist).
+    """
+    urls = []
+    for u in gdelt_sources_any(query, max_needed=50):
+        if is_verified(u) and u not in urls:
+            urls.append(u)
+        if len(urls) >= max_needed:
+            break
+    return urls
+
 # ============================================================
-# SOURCES: minimum 2 verified, show exactly 2
+# SOURCES: require at least 1 verified, show 2 total
 # ============================================================
 def ensure_sources(entry, total_needed: int = 2):
     title = strip_html(entry.get("title", ""))
     link = entry.get("link", "")
 
     verified = []
-    others = []
+    fallback = []
 
-    # 1) RSS entry link
+    # 1) Entry link first
     if link:
         if is_verified(link):
             verified.append(link)
         else:
-            others.append(link)
+            fallback.append(link)
 
-    # 2) GDELT verified sources by title + industry context
+    # 2) Verified from GDELT (title + industry context)
     query = f"{title} retail fashion textile"
-    for u in gdelt_verified_sources(query=query, max_needed=15):
+    for u in gdelt_sources_verified(query=query, max_needed=15):
         if u not in verified:
             verified.append(u)
         if len(verified) >= total_needed:
             break
 
-    # 3) Broader verified search if still short
-    if len(verified) < total_needed:
-        for u in gdelt_verified_sources(query=title, max_needed=20):
+    # 3) If still short, broaden query
+    if len(verified) < 1:
+        for u in gdelt_sources_verified(query=title, max_needed=20):
             if u not in verified:
                 verified.append(u)
             if len(verified) >= total_needed:
                 break
 
+    # Start sources list with verified sources
     sources = verified[:total_needed]
 
-    # Optional fallback (disabled by default)
+    # Fallback fill (Source 2) if allowed
     if len(sources) < total_needed and ALLOW_FALLBACK_SOURCES:
-        for u in others:
+        # Pull additional candidates from GDELT (any)
+        any_urls = gdelt_sources_any(query=query, max_needed=20) + gdelt_sources_any(query=title, max_needed=20)
+        for u in any_urls:
+            if u not in fallback and u not in sources:
+                fallback.append(u)
+
+        for u in fallback:
             if u not in sources:
                 sources.append(u)
             if len(sources) >= total_needed:
@@ -232,14 +250,15 @@ def ensure_sources(entry, total_needed: int = 2):
     return sources, verified_count
 
 def format_sources(sources):
-    # exactly 2 sources, each on new line
+    # Two lines: Source 1 and Source 2
     lines = []
     for i, s in enumerate(sources, start=1):
-        lines.append(f"Source {i}: {s}")
+        tag = "✅ Verified" if is_verified(s) else "➕ Additional"
+        lines.append(f"Source {i} ({tag}): {s}")
     return "\n".join(lines)
 
 # ============================================================
-# POST BUILDERS (LinkedIn-style, emoji rich, professional)
+# POST BUILDERS (LinkedIn-style, professional, emoji rich)
 # ============================================================
 def build_regular_post(entry, sources):
     title = safe_html(strip_html(entry.get("title", "Retail / Fashion / Textile Update")))
@@ -257,18 +276,16 @@ def build_regular_post(entry, sources):
 
     deep = (
         "🔎 <b>Deeper context (quick analysis):</b>\n"
-        "• This may influence sourcing strategy, vendor negotiations, lead times and cost pressure.\n"
-        "• Watch sell-through, inventory positions, and channel response (online vs store).\n"
-        "• The next 30–90 days will show execution via KPIs (margin, OTIF, returns, demand)."
+        "• This may affect sourcing strategy, vendor negotiations, lead times, and cost pressure.\n"
+        "• Watch inventory cycles, pricing actions, and channel mix (store vs online).\n"
+        "• The next 30–90 days will reveal execution via KPIs (margin, OTIF, returns, sell-through)."
     )
 
     insight = (
         "✅ <b>Conclusion (short insight):</b>\n"
-        "• Strong execution can improve competitiveness; weak rollout can hit margin and customer trust.\n"
-        "• Best approach: test fast → measure hard → scale what works."
+        "• Strong execution improves competitiveness; weak rollout can hit margin and customer trust.\n"
+        "• Best move: test fast → measure hard → scale what works."
     )
-
-    src_lines = format_sources(sources)
 
     cta = (
         "💬 <b>Your suggestion?</b>\n"
@@ -285,8 +302,8 @@ def build_regular_post(entry, sources):
         what,
         deep,
         insight,
-        "🔗 <b>Confirmed Sources (min 2):</b>",
-        src_lines,
+        "🔗 <b>Sources (min 1 verified):</b>",
+        format_sources(sources),
         cta,
         hashtags
     ])
@@ -299,14 +316,12 @@ def build_breaking_post(entry, sources):
     if len(summary) > 450:
         summary = summary[:450].rstrip() + "..."
 
-    src_lines = format_sources(sources)
-
     post = "\n\n".join([
         "🚨🔥 <b>BREAKING (Retail / Fashion / Textile)</b> 🔥🚨",
         f"🧵 <b>{title}</b>",
         f"📌 {summary}",
-        "🔗 <b>Confirmed Sources (min 2):</b>",
-        src_lines,
+        "🔗 <b>Sources (min 1 verified):</b>",
+        format_sources(sources),
         "💬 <b>What’s your take?</b> Opportunity or risk for brands/retailers? 👇",
         "#BreakingNews #Retail #Fashion #Textile #Apparel"
     ])
@@ -378,8 +393,8 @@ def main():
 
     sources, verified_count = ensure_sources(entry, total_needed=TOTAL_SOURCES_TO_SHOW)
 
-    # Your confirmation rule: require at least 2 verified sources
-    if verified_count < MIN_VERIFIED_SOURCES or len(sources) < 1:
+    # ✅ Your new rule: at least 1 verified source required
+    if verified_count < MIN_VERIFIED_SOURCES:
         print(f"Not enough verified sources ({verified_count}/{MIN_VERIFIED_SOURCES}). Skipping safely.")
         return
 
