@@ -1,12 +1,18 @@
-name: Telegram Textile + Tech AI News Bot
+name: Regular News Post (Every 2 Hours)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */2 * * *"
+    - cron: "0 */2 * * *"   # every 2 hours (UTC)
+
+concurrency:
+  group: regular-news
+  cancel-in-progress: true
+
 jobs:
-  run-bot:
+  run-regular:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -27,8 +33,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run bot
+      - name: Run bot (regular mode)
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          RUN_MODE: regular
         run: python bot.py
