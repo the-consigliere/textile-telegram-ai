@@ -379,7 +379,7 @@ def main():
     sources, verified_count = ensure_sources(entry, total_needed=TOTAL_SOURCES_TO_SHOW)
 
     # Your confirmation rule: require at least 2 verified sources
-    if verified_count < MIN_VERIFIED_SOURCES or len(sources) < 2:
+    if verified_count < MIN_VERIFIED_SOURCES or len(sources) < 1:
         print(f"Not enough verified sources ({verified_count}/{MIN_VERIFIED_SOURCES}). Skipping safely.")
         return
 
