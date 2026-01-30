@@ -1,0 +1,42 @@
+name: Breaking News Monitor (15 min)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"   # every 15 minutes
+
+concurrency:
+  group: breaking-news
+  cancel-in-progress: true
+
+jobs:
+  run-breaking:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Restore cache (posted history)
+        uses: actions/cache@v4
+        with:
+          path: posted.json
+          key: posted-cache-${{ github.run_id }}
+          restore-keys: |
+            posted-cache-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run bot (breaking mode)
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          RUN_MODE: breaking
+          BREAKING_MAX_AGE_HOURS: "6"
+          BREAKING_SCAN_PER_FEED: "10"
+        run: python bot.py
