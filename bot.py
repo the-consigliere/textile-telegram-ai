@@ -8,31 +8,25 @@ import requests
 from bs4 import BeautifulSoup
 import telegram
 
-# ============================================================
-# BOT CREDENTIALS
-# ============================================================
+# ======================== CONFIG ==========================
+# BOT TOKEN and CHANNEL_ID
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8386226585:AAFamfLZ38bW44RXtWfOqBeejIYZiO5zP28")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003554679496")
 
 if not BOT_TOKEN or not CHANNEL_ID:
-    raise ValueError("Missing BOT_TOKEN or CHANNEL_ID. Set GitHub Secrets or environment variables.")
+    raise ValueError("Missing BOT_TOKEN or CHANNEL_ID. Set them as GitHub Secrets.")
 
 bot = telegram.Bot(token=BOT_TOKEN)
 
-# ============================================================
-# MODE CONTROL
-# ============================================================
-# regular  = full LinkedIn-style post
-# breaking = short urgent post
-RUN_MODE = os.getenv("RUN_MODE", "regular").strip().lower()
+# ======================== MODE ============================
+RUN_MODE = os.getenv("RUN_MODE", "regular").strip().lower()  # regular or breaking
 
-# ============================================================
-# CONFIG
-# ============================================================
+# ======================== SOURCES SETTINGS =================
 MIN_VERIFIED_SOURCES = int(os.getenv("MIN_VERIFIED_SOURCES", "1"))
 TOTAL_SOURCES_TO_SHOW = int(os.getenv("TOTAL_SOURCES_TO_SHOW", "2"))
 ALLOW_FALLBACK_SOURCES = os.getenv("ALLOW_FALLBACK_SOURCES", "true").lower() == "true"
 
+# ======================== BREAKING SETTINGS =================
 BREAKING_KEYWORDS = [
     "breaking", "urgent", "exclusive",
     "acquire", "acquires", "acquisition", "merger",
@@ -44,6 +38,7 @@ BREAKING_KEYWORDS = [
 BREAKING_MAX_AGE_HOURS = int(os.getenv("BREAKING_MAX_AGE_HOURS", "6"))
 BREAKING_SCAN_PER_FEED = int(os.getenv("BREAKING_SCAN_PER_FEED", "12"))
 
+# ======================== RSS FEEDS ========================
 RSS_FEEDS = [
     "https://www.fibre2fashion.com/rss/news.xml",
     "https://www.just-style.com/feed/",
@@ -52,17 +47,18 @@ RSS_FEEDS = [
     "https://www.fashionunited.com/rss/news"
 ]
 
+# ======================== VERIFIED DOMAINS =================
 VERIFIED_DOMAINS = {
-    "reuters.com","ft.com","bbc.com","theguardian.com","wsj.com","nytimes.com","cnbc.com","bloomberg.com",
-    "retaildive.com","chainstoreage.com","retailgazette.co.uk","retaildetail.eu",
-    "businessoffashion.com","voguebusiness.com","fashionunited.com","fibre2fashion.com","just-style.com","apparelresources.com"
+    "reuters.com", "ft.com", "bbc.com", "theguardian.com",
+    "wsj.com", "nytimes.com", "cnbc.com", "bloomberg.com",
+    "retaildive.com", "chainstoreage.com", "retailgazette.co.uk",
+    "retaildetail.eu", "businessoffashion.com", "voguebusiness.com",
+    "fashionunited.com", "fibre2fashion.com", "just-style.com", "apparelresources.com"
 }
 
 CACHE_FILE = "posted.json"
 
-# ============================================================
-# HELPERS
-# ============================================================
+# ======================== HELPERS ==========================
 def load_cache():
     if os.path.exists(CACHE_FILE):
         try:
@@ -81,8 +77,7 @@ def strip_html(text: str) -> str:
         return ""
     soup = BeautifulSoup(text, "html.parser")
     clean = soup.get_text(" ", strip=True)
-    clean = re.sub(r"\s+", " ", clean).strip()
-    return clean
+    return re.sub(r"\s+", " ", clean).strip()
 
 def safe_html(text: str) -> str:
     return html.escape(text or "")
@@ -92,7 +87,7 @@ def get_domain(url: str) -> str:
         u = re.sub(r"^https?://", "", url.strip())
         domain = u.split("/")[0].lower().replace("www.", "")
         return domain
-    except Exception:
+    except:
         return ""
 
 def is_verified(url: str) -> bool:
@@ -109,33 +104,24 @@ def looks_breaking(title: str) -> bool:
     t = (title or "").lower()
     return any(k in t for k in BREAKING_KEYWORDS)
 
-# ============================================================
-# GDELT SOURCES
-# ============================================================
+# ======================== GDELT SOURCES ====================
 def gdelt_sources_any(query: str, max_needed: int = 10):
     end = time.strftime("%Y%m%d%H%M%S", time.gmtime())
-    start = time.strftime("%Y%m%d%H%M%S", time.gmtime(time.time() - 7 * 24 * 3600))
-    params = {
-        "query": query,
-        "mode": "ArtList",
-        "format": "json",
-        "maxrecords": 50,
-        "sort": "HybridRel",
-        "startdatetime": start,
-        "enddatetime": end
-    }
+    start = time.strftime("%Y%m%d%H%M%S", time.gmtime(time.time() - 7*24*3600))
     urls = []
     try:
+        params = {"query": query, "mode": "ArtList", "format": "json", "maxrecords":50, "sort":"HybridRel",
+                  "startdatetime": start, "enddatetime": end}
         r = requests.get("https://api.gdeltproject.org/api/v2/doc/doc", params=params, timeout=20)
         r.raise_for_status()
         data = r.json()
         for a in data.get("articles", []):
             u = a.get("url", "")
-            if u and u.startswith("http") and u not in urls:
+            if u.startswith("http") and u not in urls:
                 urls.append(u)
             if len(urls) >= max_needed:
                 break
-    except Exception:
+    except:
         pass
     return urls
 
@@ -148,12 +134,11 @@ def gdelt_sources_verified(query: str, max_needed: int = 10):
             break
     return urls
 
-# ============================================================
-# SOURCES MANAGEMENT
-# ============================================================
+# ======================== SOURCES ==========================
 def ensure_sources(entry, total_needed: int = 2):
     title = strip_html(entry.get("title", ""))
     link = entry.get("link", "")
+
     verified, fallback = [], []
 
     if link:
@@ -170,7 +155,7 @@ def ensure_sources(entry, total_needed: int = 2):
             break
 
     if len(verified) < 1:
-        for u in gdelt_sources_verified(query=title, max_needed=20):
+        for u in gdelt_sources_verified(title, max_needed=20):
             if u not in verified:
                 verified.append(u)
             if len(verified) >= total_needed:
@@ -179,7 +164,7 @@ def ensure_sources(entry, total_needed: int = 2):
     sources = verified[:total_needed]
 
     if len(sources) < total_needed and ALLOW_FALLBACK_SOURCES:
-        any_urls = gdelt_sources_any(query=query, max_needed=20) + gdelt_sources_any(query=title, max_needed=20)
+        any_urls = gdelt_sources_any(query=query, max_needed=20) + gdelt_sources_any(title, max_needed=20)
         for u in any_urls:
             if u not in fallback and u not in sources:
                 fallback.append(u)
@@ -200,43 +185,23 @@ def format_sources(sources):
         lines.append(f"Source {i} ({tag}): {html.escape(s)}")
     return "\n".join(lines)
 
-# ============================================================
-# POST BUILDERS
-# ============================================================
+# ======================== POST BUILDERS ===================
 def build_regular_post(entry, sources):
     title = safe_html(strip_html(entry.get("title", "")))
-    summary = safe_html(strip_html(entry.get("summary", "")))
-    if len(summary) > 900:
-        summary = summary[:900].rstrip() + "..."
+    summary = safe_html(strip_html(entry.get("summary", "")))[:900] + "..." if len(strip_html(entry.get("summary",""))) > 900 else strip_html(entry.get("summary",""))
     hook = f"🧵✨ <b>Retail / Fashion / Textile Pulse:</b> {title} ✨🧵"
     what = f"🧾 <b>What’s happening?</b>\n• {summary}"
-    deep = (
-        "🔎 <b>Deeper context (quick analysis):</b>\n"
-        "• This may affect sourcing strategy, vendor negotiations, lead times, and cost pressure.\n"
-        "• Watch inventory cycles, pricing actions, and channel mix (store vs online).\n"
-        "• The next 30–90 days will reveal execution via KPIs (margin, OTIF, returns, sell-through)."
-    )
-    insight = (
-        "✅ <b>Conclusion (short insight):</b>\n"
-        "• Strong execution improves competitiveness; weak rollout can hit margin and customer trust.\n"
-        "• Best move: test fast → measure hard → scale what works."
-    )
-    cta = (
-        "💬 <b>Your suggestion?</b>\n"
-        "If you were leading the team, what’s the ONE move you’d prioritize next — and why? 👇"
-    )
-    hashtags = (
-        "#Retail #Fashion #Textile #Apparel #Merchandising #Sourcing #SupplyChain "
-        "#RetailStrategy #BrandStrategy #FashionBusiness #TextileIndustry #RetailTrends"
-    )
+    deep = "🔎 <b>Deeper context (quick analysis):</b>\n• This may affect sourcing strategy, inventory, pricing, channel mix, and KPIs."
+    insight = "✅ <b>Conclusion:</b>\n• Strong execution improves competitiveness; weak rollout can hit margin & trust."
+    cta = "💬 <b>Your suggestion?</b>\nIf you were leading the team, what’s the ONE move you’d prioritize next?"
+    hashtags = "#Retail #Fashion #Textile #Apparel #Merchandising #Sourcing #SupplyChain #RetailStrategy #BrandStrategy #FashionBusiness #TextileIndustry #RetailTrends"
+
     post = "\n\n".join([hook, what, deep, insight, "🔗 <b>Sources (min 1 verified):</b>", format_sources(sources), cta, hashtags])
     return post
 
 def build_breaking_post(entry, sources):
     title = safe_html(strip_html(entry.get("title", "")))
-    summary = safe_html(strip_html(entry.get("summary", "")))
-    if len(summary) > 450:
-        summary = summary[:450].rstrip() + "..."
+    summary = safe_html(strip_html(entry.get("summary", "")))[:450] + "..." if len(strip_html(entry.get("summary",""))) > 450 else strip_html(entry.get("summary",""))
     post = "\n\n".join([
         "🚨🔥 <b>BREAKING (Retail / Fashion / Textile)</b> 🔥🚨",
         f"🧵 <b>{title}</b>",
@@ -248,9 +213,7 @@ def build_breaking_post(entry, sources):
     ])
     return post
 
-# ============================================================
-# FEED PICKERS
-# ============================================================
+# ======================== FEED PICKERS ====================
 def pick_latest_entry():
     latest, latest_ts = None, 0
     for feed_url in RSS_FEEDS:
@@ -264,13 +227,13 @@ def pick_latest_entry():
     return latest
 
 def find_breaking_candidate():
-    now, max_age = int(time.time()), BREAKING_MAX_AGE_HOURS * 3600
+    now, max_age = int(time.time()), BREAKING_MAX_AGE_HOURS*3600
     for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
         if not feed.entries:
             continue
         for e in feed.entries[:BREAKING_SCAN_PER_FEED]:
-            title, link = strip_html(e.get("title", "")), e.get("link", "")
+            title, link = strip_html(e.get("title","")), e.get("link","")
             if not title or not link:
                 continue
             ts = entry_timestamp(e)
@@ -278,12 +241,11 @@ def find_breaking_candidate():
                 return e
     return None
 
-# ============================================================
-# MAIN
-# ============================================================
+# ======================== MAIN ============================
 def main():
     cache = load_cache()
 
+    # Select entry
     if RUN_MODE == "breaking":
         entry = find_breaking_candidate()
         if not entry:
@@ -305,7 +267,7 @@ def main():
         print(f"Not enough verified sources ({verified_count}/{MIN_VERIFIED_SOURCES}). Skipping safely.")
         return
 
-    post = build_breaking_post(entry, sources) if RUN_MODE == "breaking" else build_regular_post(entry, sources)
+    post = build_breaking_post(entry, sources) if RUN_MODE=="breaking" else build_regular_post(entry, sources)
 
     bot.send_message(
         chat_id=CHANNEL_ID,
@@ -314,7 +276,7 @@ def main():
         disable_web_page_preview=False
     )
 
-    cache[uid] = {"title": strip_html(entry.get("title", "")), "time": int(time.time()), "mode": RUN_MODE}
+    cache[uid] = {"title": strip_html(entry.get("title","")), "time": int(time.time()), "mode": RUN_MODE}
     save_cache(cache)
     print("Posted:", cache[uid]["title"], "| mode:", RUN_MODE)
 
