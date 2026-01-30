@@ -1,10 +1,9 @@
-name: Regular News Post (Every 2 Hours)
+name: Regular News Post (Retail/Fashion/Textile) - Every 2 Hours
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */2 * * *"   # every 2 hours (UTC)
-
+    - cron: "0 */0.5 * * *"   
 concurrency:
   group: regular-news
   cancel-in-progress: true
@@ -38,6 +37,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           RUN_MODE: regular
-          MIN_VERIFIED_SOURCES: "1"
-          ALLOW_FALLBACK_SOURCES: "true"
+          MIN_VERIFIED_SOURCES: "2"
+          TOTAL_SOURCES_TO_SHOW: "2"
+          ALLOW_FALLBACK_SOURCES: "false"
         run: python bot.py
