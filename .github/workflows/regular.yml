@@ -1,9 +1,10 @@
-name: Regular News Post (Retail/Fashion/Textile) - Every 30 Minutes
+name: Regular News Post (Retail/Fashion/Textile) - Every 30 Minutes IST
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0,30 * * * *"   # every 30 minutes UTC
+    # Every 30 min UTC → corresponds to 12:30, 13:00, 13:30, ... IST
+    - cron: "0,30 * * * *"  # UTC; runs every 30 min IST automatically
 
 concurrency:
   group: regular-news
