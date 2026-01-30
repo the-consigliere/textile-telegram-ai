@@ -1,4 +1,4 @@
-name: Breaking News Monitor (Retail/Fashion/Textile) - Every 15 Minutes
+name: Breaking News Monitor (Retail/Fashion/Textile) - Every 30 Minutes
 
 on:
   workflow_dispatch:
@@ -12,7 +12,6 @@ concurrency:
 jobs:
   run-breaking:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -26,9 +25,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: posted.json
-          key: posted-cache-${{ github.ref_name }}
+          key: posted-cache-v1-${{ github.ref_name }}
           restore-keys: |
-            posted-cache-
+            posted-cache-v1-
 
       - name: Install dependencies
         run: pip install -r requirements.txt
