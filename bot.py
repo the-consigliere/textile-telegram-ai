@@ -1,71 +1,117 @@
+import os
+import json
+import time
 import feedparser
-import requests
 import telegram
-from transformers import pipeline
-from diffusers import StableDiffusionPipeline
-import torch
-import random
 
-# TELEGRAM CONFIG
-BOT_TOKEN = 8386226585:AAFamfLZ38bW44RXtWfOqBeejIYZiO5zP28
-CHANNEL_ID = -1003554679496
+# Read secrets from GitHub Actions secrets
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = os.getenv("CHANNEL_ID")
+
+if not BOT_TOKEN or not CHANNEL_ID:
+    raise ValueError("Missing BOT_TOKEN or CHANNEL_ID. Add them in GitHub Secrets → Actions.")
 
 bot = telegram.Bot(token=BOT_TOKEN)
 
-# RSS FEEDS (Retailers & Brands)
+# RSS FEEDS (Retail / Brand / Textile)
 RSS_FEEDS = [
     "https://www.fibre2fashion.com/rss/news.xml",
     "https://www.just-style.com/feed/",
     "https://www.apparelresources.com/feed/"
 ]
 
-# AI TEXT
-summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+CACHE_FILE = "posted.json"
 
-# AI IMAGE
-image_model = StableDiffusionPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-2",
-    torch_dtype=torch.float16
-)
-image_model.to("cpu")
+def load_cache():
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
 
-def generate_post(article):
-    title = f"🧵🔥 {article.title}"
+def save_cache(cache):
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
 
-    intro = summarizer(article.summary, max_length=120, min_length=80)[0]['summary_text']
-    deep = summarizer(article.summary, max_length=90, min_length=60)[0]['summary_text']
-    conclusion = summarizer(article.summary, max_length=70, min_length=40)[0]['summary_text']
+def clean_text(html_text: str) -> str:
+    # Basic cleanup for RSS summaries (keeps it simple & safe)
+    txt = html_text.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+    # Remove very common tags quickly (not perfect but fine for beginner bot)
+    for tag in ["<p>", "</p>", "<b>", "</b>", "<i>", "</i>", "<strong>", "</strong>", "<em>", "</em>"]:
+        txt = txt.replace(tag, "")
+    return " ".join(txt.split())
 
-    content = f"""
-{title}
+def build_post(entry):
+    title = entry.get("title", "Latest update")
+    link = entry.get("link", "")
+    summary = entry.get("summary", "")
+    summary = clean_text(summary)
 
-📌 {intro}
+    # Keep message short (Telegram safe)
+    if len(summary) > 700:
+        summary = summary[:700] + "..."
 
-🔍 {deep}
+    message = (
+        f"🧵 *Retail & Textile Update*\n\n"
+        f"🔥 *{title}*\n\n"
+        f"📌 {summary}\n\n"
+        f"🔗 {link}\n\n"
+        f"#Textile #Retail #Apparel #FashionBusiness"
+    )
+    return message
 
-✅ {conclusion}
+def get_latest_entry():
+    latest = None
+    latest_time = 0
 
-💬 What are your views on this development?
-Do you think this will impact retail & textile brands?
+    for url in RSS_FEEDS:
+        feed = feedparser.parse(url)
+        if not feed.entries:
+            continue
 
-#TextileIndustry #RetailBrands #FashionBusiness
-#ApparelIndustry #BrandStrategy
-"""
-    return content
+        for e in feed.entries[:5]:  # check few latest
+            # Try multiple date fields
+            published_parsed = e.get("published_parsed") or e.get("updated_parsed")
+            if published_parsed:
+                ts = int(time.mktime(published_parsed))
+            else:
+                ts = int(time.time())  # fallback
 
-def generate_image(prompt):
-    image = image_model(prompt).images[0]
-    image.save("news.png")
+            if ts > latest_time:
+                latest = e
+                latest_time = ts
 
-for feed_url in RSS_FEEDS:
-    feed = feedparser.parse(feed_url)
-    for entry in feed.entries[:1]:
-        text = generate_post(entry)
-        prompt = f"editorial illustration of {entry.title}, fashion retail, textile industry"
-        generate_image(prompt)
+    return latest
 
-        bot.send_photo(
-            chat_id=CHANNEL_ID,
-            photo=open("news.png", "rb"),
-            caption=text
-        )
+def main():
+    cache = load_cache()
+
+    entry = get_latest_entry()
+    if not entry:
+        print("No RSS entries found.")
+        return
+
+    # Unique ID for duplicates
+    uid = entry.get("id") or entry.get("link") or entry.get("title")
+
+    if cache.get(uid):
+        print("Already posted this entry. Skipping.")
+        return
+
+    text = build_post(entry)
+
+    # Send to Telegram
+    bot.send_message(
+        chat_id=CHANNEL_ID,
+        text=text,
+        parse_mode="Markdown"
+    )
+
+    cache[uid] = True
+    save_cache(cache)
+    print("Posted successfully:", entry.get("title"))
+
+if __name__ == "__main__":
+    main()
