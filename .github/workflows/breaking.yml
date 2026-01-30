@@ -3,8 +3,8 @@ name: Breaking News Monitor (Retail/Fashion/Textile) - Every 15 Minutes IST
 on:
   workflow_dispatch:
   schedule:
-    # Every 15 min UTC → corresponds to 20:00, 20:15, 20:30, ... IST for example
-    - cron: "*/15 * * * *"   # UTC; runs every 15 min IST automatically
+    # Every 15 minutes UTC (covers every 15 min IST automatically)
+    - cron: "*/15 * * * *"
 
 concurrency:
   group: breaking-news
