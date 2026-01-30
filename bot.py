@@ -254,7 +254,7 @@ def format_sources(sources):
     lines = []
     for i, s in enumerate(sources, start=1):
         tag = "✅ Verified" if is_verified(s) else "➕ Additional"
-        lines.append(f"Source {i} ({tag}): {s}")
+        lines.append(f"Source {i} ({tag}): {html.escape(s)}")
     return "\n".join(lines)
 
 # ============================================================
