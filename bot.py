@@ -2,46 +2,64 @@ import os
 import re
 import json
 import time
+import html
 import feedparser
 import requests
 from bs4 import BeautifulSoup
 import telegram
 
-# ===================== TELEGRAM CONFIG =====================
-BOT_TOKEN = os.getenv("8386226585:AAFamfLZ38bW44RXtWfOqBeejIYZiO5zP28")
-CHANNEL_ID = os.getenv("-1003554679496")
+# ============================================================
+# ✅ PASTE HERE (or keep empty and use GitHub Secrets instead)
+# ============================================================
+BOT_TOKEN = "8386226585:AAFamfLZ38bW44RXtWfOqBeejIYZiO5zP28"      # e.g. "123456789:AA...."
+CHANNEL_ID = "-1003554679496"     # e.g. -1001234567890  (can be int or string)
+
+# If you prefer GitHub Secrets, leave the above empty and set:
+# BOT_TOKEN secret name: BOT_TOKEN
+# CHANNEL_ID secret name: CHANNEL_ID
+if not BOT_TOKEN:
+    BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+if not CHANNEL_ID:
+    CHANNEL_ID = os.getenv("CHANNEL_ID", "")
 
 if not BOT_TOKEN or not CHANNEL_ID:
-    raise ValueError("Missing BOT_TOKEN or CHANNEL_ID. Add them in GitHub → Settings → Secrets → Actions.")
+    raise ValueError("Missing BOT_TOKEN or CHANNEL_ID. Paste in bot.py or set GitHub Secrets.")
 
 bot = telegram.Bot(token=BOT_TOKEN)
 
-# ===================== RUN MODES =====================
-# regular  = full LinkedIn-style post (runs every 2 hours)
-# breaking = short urgent post (runs every 15 minutes)
-RUN_MODE = os.getenv("RUN_MODE", "regular").lower()
+# ============================================================
+# MODE CONTROL
+# ============================================================
+# regular  = full LinkedIn-style post
+# breaking = short urgent post (keyword-based)
+RUN_MODE = os.getenv("RUN_MODE", "regular").strip().lower()
 
-# ===================== SOURCE REQUIREMENTS (YOUR RULES) =====================
-# Minimum 2 VERIFIED sources required to "confirm" the news
+# ============================================================
+# YOUR RULE: Minimum 2 VERIFIED sources to confirm the news
+# ============================================================
 MIN_VERIFIED_SOURCES = int(os.getenv("MIN_VERIFIED_SOURCES", "2"))
-
-# Total sources to display (we’ll output exactly 2 to match your requirement)
 TOTAL_SOURCES_TO_SHOW = int(os.getenv("TOTAL_SOURCES_TO_SHOW", "2"))
 
-# If True, we can fill missing sources with non-verified “additional” links.
-# You asked for confirmation links, so keep this FALSE.
+# You asked for confirmed sources only => keep fallback FALSE
 ALLOW_FALLBACK_SOURCES = os.getenv("ALLOW_FALLBACK_SOURCES", "false").lower() == "true"
 
-# ===================== BREAKING SETTINGS =====================
+# ============================================================
+# BREAKING SETTINGS (used only in breaking mode)
+# ============================================================
 BREAKING_KEYWORDS = [
-    "breaking", "urgent", "exclusive", "acquire", "acquires", "acquisition", "merger",
-    "ipo", "bankruptcy", "funding", "raises", "layoff", "layoffs", "security breach",
-    "recall", "ban", "probe", "lawsuit", "regulator", "strike", "shutdown"
+    "breaking", "urgent", "exclusive",
+    "acquire", "acquires", "acquisition", "merger",
+    "ipo", "bankruptcy", "funding", "raises",
+    "layoff", "layoffs", "recall", "ban",
+    "probe", "lawsuit", "regulator", "strike",
+    "shutdown"
 ]
 BREAKING_MAX_AGE_HOURS = int(os.getenv("BREAKING_MAX_AGE_HOURS", "6"))
 BREAKING_SCAN_PER_FEED = int(os.getenv("BREAKING_SCAN_PER_FEED", "12"))
 
-# ===================== RSS FEEDS (RETAIL / FASHION / TEXTILE ONLY) =====================
+# ============================================================
+# RSS FEEDS (Retail / Fashion / Textile ONLY)
+# ============================================================
 RSS_FEEDS = [
     "https://www.fibre2fashion.com/rss/news.xml",
     "https://www.just-style.com/feed/",
@@ -50,8 +68,9 @@ RSS_FEEDS = [
     "https://www.fashionunited.com/rss/news"
 ]
 
-# ===================== VERIFIED DOMAINS (ALLOWLIST) =====================
-# Add more if you want to broaden confirmation sources
+# ============================================================
+# Verified domains allowlist (edit freely)
+# ============================================================
 VERIFIED_DOMAINS = {
     "reuters.com",
     "ft.com",
@@ -77,7 +96,9 @@ VERIFIED_DOMAINS = {
 
 CACHE_FILE = "posted.json"
 
-# ===================== HELPERS =====================
+# ============================================================
+# HELPERS
+# ============================================================
 def load_cache():
     if os.path.exists(CACHE_FILE):
         try:
@@ -122,11 +143,17 @@ def looks_breaking(title: str) -> bool:
     t = (title or "").lower()
     return any(k in t for k in BREAKING_KEYWORDS)
 
-# ===================== GDELT SEARCH =====================
+def safe_html(text: str) -> str:
+    # Prevent Telegram HTML parsing errors
+    return html.escape(text or "")
+
+# ============================================================
+# GDELT (Free verified source search)
+# ============================================================
 def gdelt_verified_sources(query: str, max_needed: int = 10):
     """
     Returns verified source URLs only (filtered by allowlist).
-    Free + public API.
+    Uses free public GDELT DOC API.
     """
     end = time.strftime("%Y%m%d%H%M%S", time.gmtime())
     start = time.strftime("%Y%m%d%H%M%S", time.gmtime(time.time() - 7 * 24 * 3600))
@@ -157,26 +184,24 @@ def gdelt_verified_sources(query: str, max_needed: int = 10):
         pass
     return urls
 
-# ===================== SOURCE SELECTION =====================
+# ============================================================
+# SOURCES: minimum 2 verified, show exactly 2
+# ============================================================
 def ensure_sources(entry, total_needed: int = 2):
-    """
-    Return (sources_list, verified_count).
-    We aim for total_needed sources, verified first.
-    """
     title = strip_html(entry.get("title", ""))
     link = entry.get("link", "")
 
     verified = []
     others = []
 
-    # 1) Entry link
+    # 1) RSS entry link
     if link:
         if is_verified(link):
             verified.append(link)
         else:
             others.append(link)
 
-    # 2) Verified from GDELT using title
+    # 2) GDELT verified sources by title + industry context
     query = f"{title} retail fashion textile"
     for u in gdelt_verified_sources(query=query, max_needed=15):
         if u not in verified:
@@ -184,7 +209,7 @@ def ensure_sources(entry, total_needed: int = 2):
         if len(verified) >= total_needed:
             break
 
-    # 3) Broader verified search
+    # 3) Broader verified search if still short
     if len(verified) < total_needed:
         for u in gdelt_verified_sources(query=title, max_needed=20):
             if u not in verified:
@@ -207,74 +232,89 @@ def ensure_sources(entry, total_needed: int = 2):
     return sources, verified_count
 
 def format_sources(sources):
+    # exactly 2 sources, each on new line
     lines = []
     for i, s in enumerate(sources, start=1):
         lines.append(f"Source {i}: {s}")
     return "\n".join(lines)
 
-# ===================== CONTENT BUILDERS =====================
-def build_linkedin_style_post(entry, sources: list):
-    title = strip_html(entry.get("title", "Industry Update"))
-    summary = strip_html(entry.get("summary", ""))
+# ============================================================
+# POST BUILDERS (LinkedIn-style, emoji rich, professional)
+# ============================================================
+def build_regular_post(entry, sources):
+    title = safe_html(strip_html(entry.get("title", "Retail / Fashion / Textile Update")))
+    summary = safe_html(strip_html(entry.get("summary", "")))
 
     if len(summary) > 900:
         summary = summary[:900].rstrip() + "..."
 
-    hook = f"🧵✨ *Retail / Fashion / Textile Pulse:* {title} ✨🧵"
+    hook = f"🧵✨ <b>Retail / Fashion / Textile Pulse:</b> {title} ✨🧵"
 
     what = (
-        "🧾 *What’s this about?*\n"
+        "🧾 <b>What’s happening?</b>\n"
         f"• {summary}"
     )
 
     deep = (
-        "🔎 *Deeper context (quick analysis):*\n"
-        "• This could influence sourcing strategies, vendor negotiations, and lead times.\n"
-        "• Watch pricing pressure, inventory cycles, and how brands respond across channels.\n"
-        "• The next 30–90 days will reveal execution quality through KPIs (sell-through, margin, OTIF, returns)."
+        "🔎 <b>Deeper context (quick analysis):</b>\n"
+        "• This may influence sourcing strategy, vendor negotiations, lead times and cost pressure.\n"
+        "• Watch sell-through, inventory positions, and channel response (online vs store).\n"
+        "• The next 30–90 days will show execution via KPIs (margin, OTIF, returns, demand)."
     )
 
     insight = (
-        "✅ *Conclusion (key insight in short):*\n"
-        "• Strong execution here can improve competitiveness, but weak rollout can hit margin and customer trust.\n"
-        "• The smartest players will move fast, test small, and scale what works."
+        "✅ <b>Conclusion (short insight):</b>\n"
+        "• Strong execution can improve competitiveness; weak rollout can hit margin and customer trust.\n"
+        "• Best approach: test fast → measure hard → scale what works."
     )
 
     src_lines = format_sources(sources)
 
     cta = (
-        "💬 *Your suggestion?*\n"
+        "💬 <b>Your suggestion?</b>\n"
         "If you were leading the team, what’s the ONE move you’d prioritize next — and why? 👇"
     )
 
     hashtags = (
-        "#Retail #Fashion #Textile #Apparel #Merchandising #Sourcing #SupplyChain #RetailStrategy #BrandStrategy\n"
-        "#FashionBusiness #TextileIndustry #RetailTrends #ApparelIndustry"
+        "#Retail #Fashion #Textile #Apparel #Merchandising #Sourcing #SupplyChain "
+        "#RetailStrategy #BrandStrategy #FashionBusiness #TextileIndustry #RetailTrends"
     )
 
-    post = "\n\n".join([hook, what, deep, insight, "🔗 *Confirmed Sources (min 2):*", src_lines, cta, hashtags])
+    post = "\n\n".join([
+        hook,
+        what,
+        deep,
+        insight,
+        "🔗 <b>Confirmed Sources (min 2):</b>",
+        src_lines,
+        cta,
+        hashtags
+    ])
     return post
 
-def build_breaking_post(entry, sources: list):
-    title = strip_html(entry.get("title", "Breaking Update"))
-    summary = strip_html(entry.get("summary", ""))
+def build_breaking_post(entry, sources):
+    title = safe_html(strip_html(entry.get("title", "Breaking Update")))
+    summary = safe_html(strip_html(entry.get("summary", "")))
 
     if len(summary) > 450:
         summary = summary[:450].rstrip() + "..."
 
     src_lines = format_sources(sources)
 
-    post = (
-        f"🚨🔥 *BREAKING (Retail / Fashion / Textile)* 🔥🚨\n\n"
-        f"🧵 *{title}*\n\n"
-        f"📌 {summary}\n\n"
-        f"🔗 *Confirmed Sources (min 2):*\n{src_lines}\n\n"
-        f"💬 *What’s your take?* Opportunity or risk for brands/retailers? 👇\n\n"
-        f"#BreakingNews #Retail #Fashion #Textile #Apparel"
-    )
+    post = "\n\n".join([
+        "🚨🔥 <b>BREAKING (Retail / Fashion / Textile)</b> 🔥🚨",
+        f"🧵 <b>{title}</b>",
+        f"📌 {summary}",
+        "🔗 <b>Confirmed Sources (min 2):</b>",
+        src_lines,
+        "💬 <b>What’s your take?</b> Opportunity or risk for brands/retailers? 👇",
+        "#BreakingNews #Retail #Fashion #Textile #Apparel"
+    ])
     return post
 
-# ===================== FEED PICKERS =====================
+# ============================================================
+# FEED PICKERS
+# ============================================================
 def pick_latest_entry():
     latest = None
     latest_ts = 0
@@ -283,11 +323,13 @@ def pick_latest_entry():
         feed = feedparser.parse(feed_url)
         if not feed.entries:
             continue
+
         for e in feed.entries[:12]:
             ts = entry_timestamp(e)
             if ts > latest_ts and e.get("title") and e.get("link"):
                 latest = e
                 latest_ts = ts
+
     return latest
 
 def find_breaking_candidate():
@@ -311,10 +353,13 @@ def find_breaking_candidate():
 
     return None
 
-# ===================== MAIN =====================
+# ============================================================
+# MAIN
+# ============================================================
 def main():
     cache = load_cache()
 
+    # Choose mode
     if RUN_MODE == "breaking":
         entry = find_breaking_candidate()
         if not entry:
@@ -335,18 +380,19 @@ def main():
 
     # Your confirmation rule: require at least 2 verified sources
     if verified_count < MIN_VERIFIED_SOURCES or len(sources) < 2:
-        print(f"Not enough verified sources ({verified_count}/{MIN_VERIFIED_SOURCES}). Skipping item safely.")
+        print(f"Not enough verified sources ({verified_count}/{MIN_VERIFIED_SOURCES}). Skipping safely.")
         return
 
+    # Build post
     if RUN_MODE == "breaking":
         post = build_breaking_post(entry, sources)
     else:
-        post = build_linkedin_style_post(entry, sources)
+        post = build_regular_post(entry, sources)
 
     bot.send_message(
         chat_id=CHANNEL_ID,
         text=post,
-        parse_mode="Markdown",
+        parse_mode="HTML",
         disable_web_page_preview=False
     )
 
