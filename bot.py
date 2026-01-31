@@ -5,11 +5,12 @@ import time
 import html
 import hashlib
 import feedparser
+from difflib import SequenceMatcher
 from bs4 import BeautifulSoup
 import telegram
 
 # ============================================================
-# BASIC CONFIG
+# CONFIG
 # ============================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8386226585:AAFamfLZ38bW44RXtWfOqBeejIYZiO5zP28")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003554679496")
@@ -20,6 +21,8 @@ if not BOT_TOKEN or not CHANNEL_ID:
 
 bot = telegram.Bot(token=BOT_TOKEN)
 CACHE_FILE = "posted.json"
+
+SIMILARITY_THRESHOLD = 0.92  # 92% similarity = duplicate
 
 # ============================================================
 # BREAKING KEYWORDS
@@ -71,6 +74,28 @@ def looks_breaking(title):
     title = title.lower()
     return any(k in title for k in BREAKING_KEYWORDS)
 
+def normalize_title(title):
+    title = title.lower()
+
+    # remove source branding
+    title = re.sub(
+        r"\b(reuters|bloomberg|ft|bbc|cnbc|wsj|nytimes|guardian|forbes)\b",
+        "",
+        title
+    )
+
+    # remove punctuation
+    title = re.sub(r"[^a-z0-9 ]+", " ", title)
+    title = re.sub(r"\s+", " ", title).strip()
+    return title
+
+def make_fingerprint(title):
+    normalized = normalize_title(title)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+def is_similar(a, b):
+    return SequenceMatcher(None, a, b).ratio() >= SIMILARITY_THRESHOLD
+
 def load_cache():
     if os.path.exists(CACHE_FILE):
         try:
@@ -84,12 +109,8 @@ def save_cache(cache):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2, ensure_ascii=False)
 
-def make_fingerprint(title, summary):
-    base = f"{title.lower()}::{summary.lower()[:400]}"
-    return hashlib.sha256(base.encode("utf-8")).hexdigest()
-
 # ============================================================
-# LINKEDIN-STYLE POST BUILDER
+# LINKEDIN POST FORMAT
 # ============================================================
 def build_post(title, summary, link, mode):
     header = "🚨🔥 BREAKING NEWS" if mode == "breaking" else "🧵📊 INDUSTRY UPDATE"
@@ -103,15 +124,15 @@ def build_post(title, summary, link, mode):
 {summary}
 
 🎯 **Why it matters**  
-This development has real implications for brands, retailers, suppliers, and investors — from sourcing strategies to cost structures and competitive positioning.
+This development impacts sourcing, cost structures, brand strategy, and competitive dynamics across the retail, fashion, and textile ecosystem.
 
 💡 **My take**  
-The companies that react early, adjust supply chains, and align with shifting market dynamics will have the edge going forward.
+The companies that move early—adjusting supply chains, partnerships, and execution speed—will gain a clear advantage in the next cycle.
 
 🔗 **Source**  
 {link}
 
-💬 What’s your view? Let’s discuss 👇
+💬 What’s your take? Let’s discuss 👇
 """.strip()
 
 # ============================================================
@@ -119,6 +140,12 @@ The companies that react early, adjust supply chains, and align with shifting ma
 # ============================================================
 def main():
     cache = load_cache()
+
+    existing_titles = [
+        normalize_title(v["title"])
+        for v in cache.values()
+        if "title" in v
+    ]
 
     for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
@@ -139,15 +166,20 @@ def main():
             if RUN_MODE == "regular" and is_breaking:
                 continue
 
-            fingerprint = make_fingerprint(title, summary)
+            normalized = normalize_title(title)
 
-            # 🔥 DUPLICATE KILL SWITCH
+            # 🔥 FUZZY DUPLICATE CHECK
+            if any(is_similar(normalized, old) for old in existing_titles):
+                continue
+
+            fingerprint = make_fingerprint(title)
+
             if fingerprint in cache:
                 continue
 
             post = build_post(
                 title=title,
-                summary=summary[:800] + "...",
+                summary=summary[:900] + "...",
                 link=link,
                 mode=RUN_MODE
             )
@@ -159,22 +191,22 @@ def main():
                 disable_web_page_preview=False
             )
 
-            # SAVE PERMANENTLY (NO REPEAT EVER)
             cache[fingerprint] = {
                 "title": title,
                 "time": int(time.time()),
                 "mode": RUN_MODE
             }
-            save_cache(cache)
 
+            save_cache(cache)
             print("Posted:", title)
-            return  # ONE POST PER RUN ONLY
+            return  # ONE POST PER RUN
 
     print("No new unique news found.")
 
 # ============================================================
 if __name__ == "__main__":
     main()
+
 
 
 
