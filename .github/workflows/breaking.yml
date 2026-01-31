@@ -1,46 +1,35 @@
-name: Breaking News Monitor (Retail/Fashion/Textile) - Every 15 Minutes
+name: Breaking News Monitor
 
 on:
   workflow_dispatch:
   schedule:
-    # Every 15 min UTC (will correspond to IST automatically)
-    - cron: "*/15 * * * *"  
+    - cron: "*/15 * * * *"
 
 concurrency:
-  group: breaking-news
+  group: news-bot
   cancel-in-progress: true
 
 jobs:
-  breaking-news:
+  breaking:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+    timeout-minutes: 10
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Restore cache (posted history)
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: posted.json
-          key: posted-cache-v1-${{ github.ref_name }}
-          restore-keys: |
-            posted-cache-v1-
+          key: posted-cache-v1
+          restore-keys: posted-cache-v1
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt
 
-      - name: Run breaking news bot
+      - run: python bot.py
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           RUN_MODE: breaking
-          MIN_VERIFIED_SOURCES: "1"
-          TOTAL_SOURCES_TO_SHOW: "2"
-          ALLOW_FALLBACK_SOURCES: "true"
-          BREAKING_MAX_AGE_HOURS: "24"   # temporarily extended for testing
-          BREAKING_SCAN_PER_FEED: "20"
-        run: python bot.py
