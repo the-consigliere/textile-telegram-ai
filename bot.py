@@ -1,215 +1,288 @@
-import os
-import re
-import json
-import time
-import html
-import hashlib
-import feedparser
-from difflib import SequenceMatcher
+import os, re, json, time, html, hashlib, requests, feedparser
 from bs4 import BeautifulSoup
+from datetime import datetime
+from difflib import SequenceMatcher
+from textblob import TextBlob
 import telegram
 
 # ============================================================
-# CONFIG
+# BASIC CONFIG
 # ============================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8386226585:AAFamfLZ38bW44RXtWfOqBeejIYZiO5zP28")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003554679496")
 RUN_MODE = os.getenv("RUN_MODE", "regular").lower()
 
-if not BOT_TOKEN or not CHANNEL_ID:
-    raise ValueError("Missing BOT_TOKEN or CHANNEL_ID")
-
 bot = telegram.Bot(token=BOT_TOKEN)
+
 CACHE_FILE = "posted.json"
+TRENDS_FILE = "trends.json"
 
-SIMILARITY_THRESHOLD = 0.92  # 92% similarity = duplicate
-
-# ============================================================
-# BREAKING KEYWORDS
-# ============================================================
-BREAKING_KEYWORDS = [
-    "breaking", "urgent", "exclusive", "acquire", "acquisition",
-    "merger", "ipo", "bankruptcy", "funding", "raises",
-    "layoff", "strike", "ban", "lawsuit", "probe", "shutdown"
-]
+ONE_POST_PER_HOUR = True
+SIMILARITY_THRESHOLD = 0.93
 
 # ============================================================
-# RSS FEEDS (30+)
+# RSS FEEDS (TOP GLOBAL 30+)
 # ============================================================
 RSS_FEEDS = [
     "https://www.reuters.com/rssFeed/retailNews",
+    "https://www.reuters.com/rssFeed/businessNews",
     "https://www.reuters.com/rssFeed/fashion",
-    "https://www.bloomberg.com/feeds/markets",
+    "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
+    "https://www.ft.com/business?format=rss",
+    "https://www.ft.com/retail?format=rss",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
+    "https://feeds.bbci.co.uk/news/business/rss.xml",
+    "https://www.theguardian.com/business/rss",
+    "https://www.cnbc.com/id/10001147/device/rss/rss.html",
+    "https://www.marketwatch.com/rss/topstories",
+    "https://www.forbes.com/business/feed2/",
+    "https://www.retaildive.com/feeds/news/",
     "https://www.businessoffashion.com/rss",
     "https://www.voguebusiness.com/rss",
-    "https://www.fibre2fashion.com/rss/news.xml",
-    "https://www.just-style.com/feed/",
-    "https://www.apparelresources.com/feed/",
-    "https://www.retaildive.com/feeds/news/",
     "https://www.fashionunited.com/rss/news",
-    "https://www.chainstoreage.com/rss.xml",
-    "https://www.retailgazette.co.uk/feed/",
-    "https://www.ft.com/retail?format=rss",
-    "https://www.cnbc.com/id/10000108/device/rss/rss.html",
-    "https://www.bbc.com/news/business/rss.xml",
-    "https://www.nytimes.com/services/xml/rss/nyt/Business.xml",
-    "https://www.wsj.com/xml/rss/3_7014.xml",
-    "https://www.theguardian.com/business/retail/rss",
-    "https://www.forbes.com/retail/feed/",
     "https://www.sourcingjournal.com/feed/",
     "https://www.ecotextile.com/rss.xml",
     "https://www.textileworld.com/feed/",
-    "https://www.fashionnetwork.com/rss.xml",
-    "https://www.marketwatch.com/rss/topstories"
+    "https://www.greenbiz.com/rss/feeds/latest.xml",
+    "https://www.livemint.com/rss/companies",
+    "https://economictimes.indiatimes.com/rssfeeds/13352306.cms",
+    "https://asia.nikkei.com/rss/feed/nar",
+    "https://www.scmp.com/rss/91/feed",
+    "https://www.fastcompany.com/rss"
 ]
+
+# ============================================================
+# TOPICS & KEYWORDS
+# ============================================================
+TOPICS = {
+    "M&A": ["acquire", "acquisition", "merger", "buyout", "stake"],
+    "Funding": ["funding", "raises", "investment", "round", "capital"],
+    "Supply Chain": ["supply", "logistics", "factory", "manufacturing"],
+    "Policy": ["ban", "regulation", "law", "probe", "lawsuit"],
+    "Retail Strategy": ["store", "pricing", "expansion", "launch", "strategy"]
+}
+
+BREAKING_KEYWORDS = [
+    "breaking", "urgent", "exclusive", "ipo",
+    "bankruptcy", "layoff", "shutdown", "strike"
+]
+
+# ============================================================
+# IMAGE FALLBACKS
+# ============================================================
+TOPIC_IMAGES = {
+    "M&A": "https://images.unsplash.com/photo-1523958203904-cdcb402031fd",
+    "Funding": "https://images.unsplash.com/photo-1553729459-efe14ef6055d",
+    "Supply Chain": "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d",
+    "Policy": "https://images.unsplash.com/photo-1504711434969-e33886168f5c",
+    "Retail Strategy": "https://images.unsplash.com/photo-1521335629791-ce4aec67dd47",
+    "Industry": "https://images.unsplash.com/photo-1483985988355-763728e1935b"
+}
 
 # ============================================================
 # HELPERS
 # ============================================================
-def clean_text(text):
+def clean(text):
     soup = BeautifulSoup(text or "", "html.parser")
     return re.sub(r"\s+", " ", soup.get_text()).strip()
 
-def looks_breaking(title):
-    title = title.lower()
-    return any(k in title for k in BREAKING_KEYWORDS)
+def normalize(text):
+    return re.sub(r"[^a-z0-9 ]+", " ", text.lower()).strip()
 
-def normalize_title(title):
-    title = title.lower()
+def fingerprint(title):
+    return hashlib.sha256(normalize(title).encode()).hexdigest()
 
-    # remove source branding
-    title = re.sub(
-        r"\b(reuters|bloomberg|ft|bbc|cnbc|wsj|nytimes|guardian|forbes)\b",
-        "",
-        title
-    )
-
-    # remove punctuation
-    title = re.sub(r"[^a-z0-9 ]+", " ", title)
-    title = re.sub(r"\s+", " ", title).strip()
-    return title
-
-def make_fingerprint(title):
-    normalized = normalize_title(title)
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-def is_similar(a, b):
+def similar(a, b):
     return SequenceMatcher(None, a, b).ratio() >= SIMILARITY_THRESHOLD
 
-def load_cache():
-    if os.path.exists(CACHE_FILE):
-        try:
-            with open(CACHE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
+def load_json(path):
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
     return {}
 
-def save_cache(cache):
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(cache, f, indent=2, ensure_ascii=False)
+def save_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
 
 # ============================================================
-# LINKEDIN POST FORMAT
+# DETECTION LOGIC
 # ============================================================
-def build_post(title, summary, link, mode):
-    header = "🚨🔥 BREAKING NEWS" if mode == "breaking" else "🧵📊 INDUSTRY UPDATE"
+def is_breaking(title):
+    return any(k in title.lower() for k in BREAKING_KEYWORDS)
 
+def detect_topic(title, summary):
+    text = (title + " " + summary).lower()
+    for topic, keys in TOPICS.items():
+        if any(k in text for k in keys):
+            return topic
+    return "Industry"
+
+# ============================================================
+# SENTIMENT
+# ============================================================
+def sentiment(text):
+    polarity = TextBlob(text).sentiment.polarity
+    if polarity > 0.15: return "🟢 Positive"
+    if polarity < -0.15: return "🔴 Negative"
+    return "🟡 Neutral"
+
+# ============================================================
+# AI-STYLE SUMMARY
+# ============================================================
+def ai_summary(title, summary):
+    sentences = summary.split(". ")
+    bullets = [s.strip() for s in sentences if len(s) > 40][:5]
+    return {
+        "overview": f"{title} signals a meaningful shift across the retail, fashion, and textile landscape.",
+        "bullets": [f"• {b}." for b in bullets]
+    }
+
+# ============================================================
+# OPINION
+# ============================================================
+def ai_take(topic):
+    takes = {
+        "M&A": "Consolidation is accelerating as brands chase scale, margins, and control.",
+        "Funding": "Investors are backing efficiency-first models, not growth-at-all-costs.",
+        "Supply Chain": "Supply resilience has become a boardroom-level competitive advantage.",
+        "Policy": "Regulation will increasingly dictate sourcing and pricing decisions.",
+        "Retail Strategy": "Winning brands are aligning physical retail with digital efficiency.",
+        "Industry": "This reflects broader cost pressure and shifting consumer demand."
+    }
+    return takes.get(topic)
+
+# ============================================================
+# HASHTAGS
+# ============================================================
+def hashtags(topic):
+    base = ["#Retail", "#FashionBusiness", "#TextileIndustry"]
+    extra = {
+        "M&A": ["#Mergers", "#Acquisitions"],
+        "Funding": ["#Funding", "#VentureCapital"],
+        "Supply Chain": ["#SupplyChain", "#Manufacturing"],
+        "Policy": ["#Regulation", "#Compliance"],
+        "Retail Strategy": ["#RetailStrategy", "#BrandGrowth"]
+    }
+    return " ".join(base + extra.get(topic, []))
+
+# ============================================================
+# IMAGE FETCH
+# ============================================================
+def fetch_image(url, topic):
+    try:
+        r = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+        soup = BeautifulSoup(r.text, "html.parser")
+        og = soup.find("meta", property="og:image")
+        if og and og.get("content"):
+            return og["content"]
+    except:
+        pass
+    return TOPIC_IMAGES.get(topic, TOPIC_IMAGES["Industry"])
+
+# ============================================================
+# TREND TRACKER
+# ============================================================
+def update_trends(topic):
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    trends = load_json(TRENDS_FILE)
+    trends.setdefault(today, {})
+    trends[today][topic] = trends[today].get(topic, 0) + 1
+    save_json(TRENDS_FILE, trends)
+
+# ============================================================
+# POST FORMAT
+# ============================================================
+def build_post(e, sent, ai):
     return f"""
-{header}
+🔹 {e['title']}
 
-🔹 **{title}**
+🏷️ {e['topic']}
 
-📰 **What’s happening?**  
-{summary}
+📌 What’s happening  
+{ai['overview']}
 
-🎯 **Why it matters**  
-This development impacts sourcing, cost structures, brand strategy, and competitive dynamics across the retail, fashion, and textile ecosystem.
+📊 Key highlights  
+{chr(10).join(ai['bullets'])}
 
-💡 **My take**  
-The companies that move early—adjusting supply chains, partnerships, and execution speed—will gain a clear advantage in the next cycle.
+📈 Sentiment: {sent}
 
-🔗 **Source**  
-{link}
+💡 My take  
+{ai_take(e['topic'])}
 
-💬 What’s your take? Let’s discuss 👇
+🔗 Source: {e['link']}
+
+{hashtags(e['topic'])}
 """.strip()
 
 # ============================================================
-# MAIN LOGIC
+# MAIN
 # ============================================================
 def main():
-    cache = load_cache()
+    cache = load_json(CACHE_FILE)
+    current_hour = datetime.utcnow().strftime("%Y-%m-%d-%H")
 
-    existing_titles = [
-        normalize_title(v["title"])
-        for v in cache.values()
-        if "title" in v
-    ]
+    if ONE_POST_PER_HOUR:
+        if any(v.get("hour") == current_hour for v in cache.values()):
+            return
 
-    for feed_url in RSS_FEEDS:
-        feed = feedparser.parse(feed_url)
+    seen_titles = [normalize(v["title"]) for v in cache.values()]
+    candidates = []
 
-        for entry in feed.entries[:10]:
-            title = clean_text(entry.get("title", ""))
-            summary = clean_text(entry.get("summary", ""))
-            link = entry.get("link", "")
+    for feed in RSS_FEEDS:
+        data = feedparser.parse(feed)
+        for e in data.entries[:10]:
+            title = clean(e.get("title"))
+            summary = clean(e.get("summary", ""))
+            link = e.get("link", "")
 
             if not title or not summary or not link:
                 continue
 
-            is_breaking = looks_breaking(title)
+            if RUN_MODE == "breaking" and not is_breaking(title): continue
+            if RUN_MODE == "regular" and is_breaking(title): continue
 
-            # STRICT MODE SEPARATION
-            if RUN_MODE == "breaking" and not is_breaking:
-                continue
-            if RUN_MODE == "regular" and is_breaking:
-                continue
+            norm = normalize(title)
+            if any(similar(norm, old) for old in seen_titles): continue
 
-            normalized = normalize_title(title)
+            fp = fingerprint(title)
+            if fp in cache: continue
 
-            # 🔥 FUZZY DUPLICATE CHECK
-            if any(is_similar(normalized, old) for old in existing_titles):
-                continue
+            topic = detect_topic(title, summary)
 
-            fingerprint = make_fingerprint(title)
-
-            if fingerprint in cache:
-                continue
-
-            post = build_post(
-                title=title,
-                summary=summary[:900] + "...",
-                link=link,
-                mode=RUN_MODE
-            )
-
-            bot.send_message(
-                chat_id=CHANNEL_ID,
-                text=html.escape(post),
-                parse_mode="HTML",
-                disable_web_page_preview=False
-            )
-
-            cache[fingerprint] = {
+            candidates.append({
                 "title": title,
-                "time": int(time.time()),
-                "mode": RUN_MODE
-            }
+                "summary": summary[:900],
+                "link": link,
+                "topic": topic,
+                "breaking": is_breaking(title)
+            })
 
-            save_cache(cache)
-            print("Posted:", title)
-            return  # ONE POST PER RUN
+    if not candidates:
+        return
 
-    print("No new unique news found.")
+    best = max(candidates, key=lambda x: (x["breaking"], len(x["summary"])))
+    sent = sentiment(best["summary"])
+    ai = ai_summary(best["title"], best["summary"])
+    image = fetch_image(best["link"], best["topic"])
+    caption = build_post(best, sent, ai)
+
+    bot.send_photo(
+        chat_id=CHANNEL_ID,
+        photo=image,
+        caption=html.escape(caption),
+        parse_mode="HTML"
+    )
+
+    cache[fingerprint(best["title"])] = {
+        "title": best["title"],
+        "hour": current_hour,
+        "time": int(time.time())
+    }
+
+    save_json(CACHE_FILE, cache)
+    update_trends(best["topic"])
 
 # ============================================================
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
