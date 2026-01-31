@@ -19,6 +19,7 @@ TRENDS_FILE = "trends.json"
 
 ONE_POST_PER_HOUR = True
 SIMILARITY_THRESHOLD = 0.93
+CAPTION_LIMIT = 900  # Telegram photo caption safety
 
 # ============================================================
 # RSS FEEDS (TOP GLOBAL 30+)
@@ -26,9 +27,7 @@ SIMILARITY_THRESHOLD = 0.93
 RSS_FEEDS = [
     "https://www.reuters.com/rssFeed/retailNews",
     "https://www.reuters.com/rssFeed/businessNews",
-    "https://www.reuters.com/rssFeed/fashion",
     "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
-    "https://www.ft.com/business?format=rss",
     "https://www.ft.com/retail?format=rss",
     "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
     "https://feeds.bbci.co.uk/news/business/rss.xml",
@@ -39,27 +38,24 @@ RSS_FEEDS = [
     "https://www.retaildive.com/feeds/news/",
     "https://www.businessoffashion.com/rss",
     "https://www.voguebusiness.com/rss",
-    "https://www.fashionunited.com/rss/news",
     "https://www.sourcingjournal.com/feed/",
     "https://www.ecotextile.com/rss.xml",
     "https://www.textileworld.com/feed/",
     "https://www.greenbiz.com/rss/feeds/latest.xml",
-    "https://www.livemint.com/rss/companies",
     "https://economictimes.indiatimes.com/rssfeeds/13352306.cms",
     "https://asia.nikkei.com/rss/feed/nar",
-    "https://www.scmp.com/rss/91/feed",
     "https://www.fastcompany.com/rss"
 ]
 
 # ============================================================
-# TOPICS & KEYWORDS
+# TOPICS
 # ============================================================
 TOPICS = {
     "M&A": ["acquire", "acquisition", "merger", "buyout", "stake"],
-    "Funding": ["funding", "raises", "investment", "round", "capital"],
+    "Funding": ["funding", "raises", "investment", "round"],
     "Supply Chain": ["supply", "logistics", "factory", "manufacturing"],
-    "Policy": ["ban", "regulation", "law", "probe", "lawsuit"],
-    "Retail Strategy": ["store", "pricing", "expansion", "launch", "strategy"]
+    "Policy": ["ban", "regulation", "law", "probe"],
+    "Retail Strategy": ["store", "pricing", "expansion", "launch"]
 }
 
 BREAKING_KEYWORDS = [
@@ -82,6 +78,11 @@ TOPIC_IMAGES = {
 # ============================================================
 # HELPERS
 # ============================================================
+def safe_caption(text, limit=CAPTION_LIMIT):
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0] + "..."
+
 def clean(text):
     soup = BeautifulSoup(text or "", "html.parser")
     return re.sub(r"\s+", " ", soup.get_text()).strip()
@@ -93,7 +94,7 @@ def fingerprint(title):
     return hashlib.sha256(normalize(title).encode()).hexdigest()
 
 def similar(a, b):
-    return SequenceMatcher(None, a, b).ratio() >= SIMILARITY_THRESHOLD
+    return SequenceMatcher(None, a, b).ratio()
 
 def load_json(path):
     if os.path.exists(path):
@@ -106,7 +107,7 @@ def save_json(path, data):
         json.dump(data, f, indent=2)
 
 # ============================================================
-# DETECTION LOGIC
+# DETECTION
 # ============================================================
 def is_breaking(title):
     return any(k in title.lower() for k in BREAKING_KEYWORDS)
@@ -122,35 +123,34 @@ def detect_topic(title, summary):
 # SENTIMENT
 # ============================================================
 def sentiment(text):
-    polarity = TextBlob(text).sentiment.polarity
-    if polarity > 0.15: return "🟢 Positive"
-    if polarity < -0.15: return "🔴 Negative"
+    p = TextBlob(text).sentiment.polarity
+    if p > 0.15: return "🟢 Positive"
+    if p < -0.15: return "🔴 Negative"
     return "🟡 Neutral"
 
 # ============================================================
-# AI-STYLE SUMMARY
+# AI SUMMARY
 # ============================================================
 def ai_summary(title, summary):
     sentences = summary.split(". ")
-    bullets = [s.strip() for s in sentences if len(s) > 40][:5]
+    bullets = [s for s in sentences if len(s) > 40][:4]
     return {
-        "overview": f"{title} signals a meaningful shift across the retail, fashion, and textile landscape.",
-        "bullets": [f"• {b}." for b in bullets]
+        "overview": f"{title} highlights a significant development reshaping the retail, fashion, and textile sector.",
+        "bullets": [f"• {b.strip()}." for b in bullets]
     }
 
 # ============================================================
-# OPINION
+# AI TAKE
 # ============================================================
 def ai_take(topic):
-    takes = {
-        "M&A": "Consolidation is accelerating as brands chase scale, margins, and control.",
-        "Funding": "Investors are backing efficiency-first models, not growth-at-all-costs.",
-        "Supply Chain": "Supply resilience has become a boardroom-level competitive advantage.",
-        "Policy": "Regulation will increasingly dictate sourcing and pricing decisions.",
-        "Retail Strategy": "Winning brands are aligning physical retail with digital efficiency.",
-        "Industry": "This reflects broader cost pressure and shifting consumer demand."
-    }
-    return takes.get(topic)
+    return {
+        "M&A": "This signals accelerated consolidation as brands chase scale and pricing power.",
+        "Funding": "Capital is flowing toward efficiency-driven, profitable models.",
+        "Supply Chain": "Supply resilience is now a competitive moat, not a cost center.",
+        "Policy": "Regulation is becoming a strategic variable, not just compliance.",
+        "Retail Strategy": "Execution speed matters more than store count.",
+        "Industry": "This reflects deeper structural shifts in global consumption."
+    }.get(topic)
 
 # ============================================================
 # HASHTAGS
@@ -160,9 +160,9 @@ def hashtags(topic):
     extra = {
         "M&A": ["#Mergers", "#Acquisitions"],
         "Funding": ["#Funding", "#VentureCapital"],
-        "Supply Chain": ["#SupplyChain", "#Manufacturing"],
-        "Policy": ["#Regulation", "#Compliance"],
-        "Retail Strategy": ["#RetailStrategy", "#BrandGrowth"]
+        "Supply Chain": ["#SupplyChain"],
+        "Policy": ["#Regulation"],
+        "Retail Strategy": ["#RetailStrategy"]
     }
     return " ".join(base + extra.get(topic, []))
 
@@ -178,26 +178,16 @@ def fetch_image(url, topic):
             return og["content"]
     except:
         pass
-    return TOPIC_IMAGES.get(topic, TOPIC_IMAGES["Industry"])
+    return TOPIC_IMAGES.get(topic)
 
 # ============================================================
-# TREND TRACKER
-# ============================================================
-def update_trends(topic):
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    trends = load_json(TRENDS_FILE)
-    trends.setdefault(today, {})
-    trends[today][topic] = trends[today].get(topic, 0) + 1
-    save_json(TRENDS_FILE, trends)
-
-# ============================================================
-# POST FORMAT
+# POST FORMAT (LINKEDIN-STYLE)
 # ============================================================
 def build_post(e, sent, ai):
     return f"""
-🔹 {e['title']}
+🔥 {e['title']}
 
-🏷️ {e['topic']}
+🏷️ Topic: {e['topic']}
 
 📌 What’s happening  
 {ai['overview']}
@@ -239,20 +229,24 @@ def main():
             if not title or not summary or not link:
                 continue
 
-            if RUN_MODE == "breaking" and not is_breaking(title): continue
-            if RUN_MODE == "regular" and is_breaking(title): continue
+            if RUN_MODE == "breaking" and not is_breaking(title):
+                continue
+            if RUN_MODE == "regular" and is_breaking(title):
+                continue
 
             norm = normalize(title)
-            if any(similar(norm, old) for old in seen_titles): continue
+            if any(similar(norm, old) >= SIMILARITY_THRESHOLD for old in seen_titles):
+                continue
 
             fp = fingerprint(title)
-            if fp in cache: continue
+            if fp in cache:
+                continue
 
             topic = detect_topic(title, summary)
 
             candidates.append({
                 "title": title,
-                "summary": summary[:900],
+                "summary": summary[:1200],
                 "link": link,
                 "topic": topic,
                 "breaking": is_breaking(title)
@@ -262,16 +256,28 @@ def main():
         return
 
     best = max(candidates, key=lambda x: (x["breaking"], len(x["summary"])))
+
     sent = sentiment(best["summary"])
     ai = ai_summary(best["title"], best["summary"])
     image = fetch_image(best["link"], best["topic"])
-    caption = build_post(best, sent, ai)
+    full_post = build_post(best, sent, ai)
+
+    short_caption = safe_caption(
+        f"🧵 {best['title']}\n\n🏷️ {best['topic']} | {sent}"
+    )
 
     bot.send_photo(
         chat_id=CHANNEL_ID,
         photo=image,
-        caption=html.escape(caption),
+        caption=html.escape(short_caption),
         parse_mode="HTML"
+    )
+
+    bot.send_message(
+        chat_id=CHANNEL_ID,
+        text=html.escape(full_post),
+        parse_mode="HTML",
+        disable_web_page_preview=False
     )
 
     cache[fingerprint(best["title"])] = {
@@ -281,7 +287,6 @@ def main():
     }
 
     save_json(CACHE_FILE, cache)
-    update_trends(best["topic"])
 
 # ============================================================
 if __name__ == "__main__":
